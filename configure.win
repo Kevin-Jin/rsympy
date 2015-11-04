@@ -1,0 +1,18 @@
+#!/bin/sh
+# Almquist shell script for Windows
+
+R_SCRIPT="${R_HOME}/bin${R_ARCH_BIN}/Rscript"
+SET_INTERNET2=`"${R_SCRIPT}" -e "cat(ifelse(compareVersion(sprintf('%s.%s', R.version['major'], R.version['minor']), '3.2.2') > 0, '', 'setInternet2();'))"`
+
+# Use libcurl if available
+USE_LIBCURL=`"${R_SCRIPT}" -e "cat(ifelse(capabilities('libcurl'), 'method=\'libcurl\',', ''))"`
+
+if [ ! -d inst/Lib/sympy ]; then
+	mkdir -p inst/Lib
+	if [ ! -f sympy-0.7.6.1.tar.gz ]; then
+		"${R_SCRIPT}" -e "${SET_INTERNET2} download.file('https://github.com/sympy/sympy/releases/download/sympy-0.7.6.1/sympy-0.7.6.1.tar.gz', 'sympy-0.7.6.1.tar.gz', ${USE_LIBCURL} quiet = TRUE)"
+	fi
+	tar -xzf sympy-0.7.6.1.tar.gz -C inst/Lib sympy-0.7.6.1/sympy
+	mv inst/Lib/sympy-0.7.6.1/sympy inst/Lib
+	rm -r inst/Lib/sympy-0.7.6.1
+fi
