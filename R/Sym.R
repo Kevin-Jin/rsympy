@@ -1,17 +1,17 @@
 
 Sym <- function(..., retclass = c("Sym", "character")) {
-   args <- list(...)
-   retclass <- match.arg(retclass)
-   value <- if (length(args) > 1) paste("(", ..., ")") else paste(args[[1]])
-   if (retclass == "Sym") class(value) <- c("Sym", "character")
-   value
+	args <- list(...)
+	retclass <- match.arg(retclass)
+	value <- if (length(args) > 1) paste("(", ..., ")") else paste(args[[1]])
+	if (retclass == "Sym") class(value) <- c("Sym", "character")
+	value
 }
 
 as.character.Sym <- function(x, ...) as.character(unclass(x))
 
 Ops.Sym <- function (e1, e2) 
-    if (missing(e2)) { Sym(.Generic, e1)
-    } else Sym(e1, .Generic, e2)
+	if (missing(e2)) { Sym(.Generic, e1)
+	} else Sym(e1, .Generic, e2)
 
 Math.Sym <- function(x, ...) {
 	idx <- match(.Generic, transtab[,1], nomatch = 0)
@@ -27,9 +27,9 @@ deriv.Sym <- function(expr, name = "x", n = 1, ...)
 Limit <- function(expr, name = "x", value) 
 	Sym("limit(", expr, ",", name, ",", value, ")")
 
-Var <- function(x, retclass = c("Sym", "character", "NULL")) {
+Var <- function(x, retclass = c("Sym", "character")) {
 	x <- paste("var('", x, "')", sep = "")
-	sympy(x, retclass = match.arg(retclass))
+	sympy(x, retclass = if (is.null(retclass)) NULL else match.arg(retclass))
 }
 
 solve.Sym <- function(a, b, method = c("'GE'", "'ADJ'", "'LU'"), ...) {

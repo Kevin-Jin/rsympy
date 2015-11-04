@@ -6,6 +6,6 @@ Author: G Grothendieck (SymPy itself is by Ondrej Certik and others),
 	Contributors: Carlos J. Gil Bellosta
 Maintainer: G Grothendieck <ggrothendieck@gmail.com>
 Description: Access SymPy computer algebra system from R via Jython
-Depends: rJython
+Depends: PythonInR
 License: GPL
 URL: http://rsympy.googlecode.com

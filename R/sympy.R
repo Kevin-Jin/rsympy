@@ -1,10 +1,4 @@
 
-jythonStart <- function(jython.jar) {
-	.jinit(jython.jar)
-	assign(".Jython", .jnew("org.python.util.PythonInterpreter"), .GlobalEnv)
-	invisible(.Jython)
-}
-
 sympyStart <- function() {
 
 	# like system.file but on Windows uses \ in path rather than /
@@ -13,24 +7,29 @@ sympyStart <- function() {
 		if (.Platform$OS == "windows") gsub("/", "\\", s, fixed = TRUE) else s
 	}
 
-    assign(".Jython", rJython( modules = system.file( "Lib", package = "rSymPy" ) ), .GlobalEnv)
+	if (!pyIsConnected()) pyConnect()
 
-	.Jython$exec("import sys")
-	.Jython$exec("from sympy import *")
+	pyExecp("import sys")
+	pyExecp( paste( "sys.path.append(", system.file( "Lib", package = "rSymPy" ), ")", sep = '"' ) )
+	pyExecp("from sympy import *")
+	pyExecp("from sympy.printing.mathml import mathml")
+	pyExecp("from sympy.utilities.lambdify import lambdify")
 
+	assign('.SympyConnected', TRUE)
 }
 
-sympy <- function(..., retclass = c("character", "Sym", "NULL"), debug = FALSE) {
-	if (!exists(".Jython", .GlobalEnv)) sympyStart()
-    retclass <- match.arg(retclass)
-	if (retclass != "NULL") {
-		.Jython$exec(paste("__Rsympy=", ...))
-		if (debug) .Jython$exec("print __Rsympy") 
-		Rsympy <- .Jython$get("__Rsympy")
-		out <- if (!is.null(Rsympy)) .jstrVal(Rsympy)
-        if (!is.null(out) && retclass == "Sym") structure(out, class = "Sym")
+sympy <- function(..., retclass = c("character", "Sym"), debug = FALSE) {
+	if (!exists(".SympyConnected", .GlobalEnv)) sympyStart()
+	retclass <- if (is.null(retclass)) NULL else match.arg(retclass)
+	if (!is.null(retclass)) {
+		pyExec(paste("__Rsympy=None"))
+		pyExecp(paste("__Rsympy=", ..., sep = ""))
+		if (debug) pyExecp("print(__Rsympy)")
+		pyExec(paste("__Rsympy = str(__Rsympy)"))
+		out <- pyGet("__Rsympy")
+		if (!is.null(out) && retclass == "Sym") structure(out, class = "Sym")
 		else out
-	} else .Jython$exec(paste(...))
+	} else pyExecp(paste(...))
 }
 
 
