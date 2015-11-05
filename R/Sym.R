@@ -1,4 +1,6 @@
 
+# constructor
+
 Sym <- function(..., retclass = c("Sym", "character")) {
 	args <- list(...)
 	retclass <- match.arg(retclass)
@@ -6,6 +8,8 @@ Sym <- function(..., retclass = c("Sym", "character")) {
 	if (retclass == "Sym") class(value) <- c("Sym", "character")
 	value
 }
+
+# methods
 
 as.character.Sym <- function(x, ...) as.character(unclass(x))
 
@@ -24,22 +28,27 @@ print.Sym <- function(x, ...) print(sympy(unclass(x), ...))
 deriv.Sym <- function(expr, name = "x", n = 1, ...) 
 	Sym("diff(", expr, ", ", name, ",", n, ")")
 
-Limit <- function(expr, name = "x", value) 
+if (!isGenericS3("limit")) setGenericS3("limit")
+limit.Sym <- function(expr, name = "x", value) 
 	Sym("limit(", expr, ",", name, ",", value, ")")
-
-Var <- function(x, retclass = c("Sym", "character")) {
-	x <- paste("var('", x, "')", sep = "")
-	sympy(x, retclass = if (is.null(retclass)) NULL else match.arg(retclass))
-}
 
 solve.Sym <- function(a, b, method = c("'GE'", "'ADJ'", "'LU'"), ...) {
 	stopifnot(missing(b))
 	Sym(paste("(", a, ").inv(", match.arg(method), ")"))
 }
 
-Integrate <- function(x, ...) Sym("integrate(", paste(x, ..., sep = ","), ")")
+if (!isGenericS3("integrate")) setGenericS3("integrate", dontWarn = "stats")
+integrate.Sym <- function(x, ...) Sym("integrate(", paste(x, ..., sep = ","), ")")
 
 t.Sym <- function(x) Sym(paste("(", x, ").transpose()"))
+
+# static factories
+
+Var <- function(x, retclass = c("Sym", "character")) {
+	x <- paste("var('", x, "')", sep = "")
+	sympy(x, retclass = if (is.null(retclass)) NULL else match.arg(retclass))
+}
+
 List <- function(...) Sym("[", paste( ..., sep = ","), "]")
 Matrix <- function(...) Sym("Matrix(", paste(..., sep = ","), ")")
 Zero <- function(n) Sym(paste("zero(", n, ")"))

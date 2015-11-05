@@ -6,5 +6,6 @@ exportPattern(".")
 
 # Import all packages listed as Imports or Depends
 import(
-  PythonInR
+  PythonInR,
+  R.methodsS3
 )
