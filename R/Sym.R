@@ -1,7 +1,7 @@
 
 # constructor
 
-Sym <- function(..., retclass = c("Sym", "character")) {
+Sym <- function(..., retclass = c("Sym", "character", "expr")) {
 	args <- list(...)
 	retclass <- match.arg(retclass)
 	value <- if (length(args) > 1) paste("(", ..., ")") else paste(args[[1]])
@@ -9,17 +9,21 @@ Sym <- function(..., retclass = c("Sym", "character")) {
 	value
 }
 
+# helper functions
+
+coalesce <- function(x, def) if (mode(x) == mode(def) && length(x) > 0) x else def
+
 # methods
 
 as.character.Sym <- function(x, ...) as.character(unclass(x))
 
 print.Sym <- function(x, ...) print(sympy(unclass(x), ...))
 
-deriv.Sym <- function(expr, name = sympySymbols(x), n = 1, ...) 
+deriv.Sym <- function(expr, name = coalesce(sympySymbols(expr), "x"), n = 1, ...) 
 	Sym("diff(", expr, ", ", name[1], ",", n, ")")
 
 if (!isGenericS3("limit")) setGenericS3("limit")
-limit.Sym <- function(expr, name = sympySymbols(x), value) 
+limit.Sym <- function(expr, name = coalesce(sympySymbols(expr), "x"), value) 
 	Sym("limit(", expr, ",", name[1], ",", value, ")")
 
 solve.Sym <- function(a, b, method = c("'GE'", "'ADJ'", "'LU'"), ...) {
@@ -28,7 +32,7 @@ solve.Sym <- function(a, b, method = c("'GE'", "'ADJ'", "'LU'"), ...) {
 }
 
 if (!isGenericS3("integrate")) setGenericS3("integrate", dontWarn = "stats")
-integrate.Sym <- function(x, lower = NULL, upper = NULL, name = sympySymbols(x), ..., subdivisions = Inf, rel.tol = 0, abs.tol = 0, stop.on.error = TRUE, keep.xy = FALSE, aux = NULL) {
+integrate.Sym <- function(x, lower = NULL, upper = NULL, name = coalesce(sympySymbols(x), "x"), ..., subdivisions = Inf, rel.tol = 0, abs.tol = 0, stop.on.error = TRUE, keep.xy = FALSE, aux = NULL) {
 	if (xor(is.numeric(lower), is.numeric(upper)))
 		stop("lower or upper must both be specified or both be unspecified")
 	if (!is.character(name) || length(name) == 0)
@@ -45,8 +49,12 @@ integrate.Sym <- function(x, lower = NULL, upper = NULL, name = sympySymbols(x),
 }
 
 if (!isGenericS3("eval")) setGenericS3("eval", dontWarn = "base")
-eval.Sym <- function(x, envir = parent.frame(), enclos = if(is.list(envir) || is.pairlist(envir)) parent.frame() else baseenv(), retclass = c("character", "Sym")) {
+eval.Sym <- function(x, envir = parent.frame(), enclos = if(is.list(envir) || is.pairlist(envir)) parent.frame() else baseenv(), retclass = c("character", "Sym", "expr")) {
 	atoms <- sympySymbols(x)
+	if (is.numeric(atoms)) atoms <- NULL
+	if (length(atoms) == 0)
+		return(sympy(x, retclass = if (is.null(retclass)) NULL else match.arg(retclass)))
+
 	stopifnot(is.character(atoms))
 	vals <- numeric(length(atoms))
 
@@ -76,7 +84,7 @@ eval.Sym <- function(x, envir = parent.frame(), enclos = if(is.list(envir) || is
 
 # AKA lambda(), turns an expression into an R function that can accept parameters
 # TODO: if retclass is Sym, pass all numbers to sympy.core.numbers.Number __new__
-as.function.Sym <- function(x, param = NULL, retclass = c("character", "Sym")) {
+as.function.Sym <- function(x, param = NULL, retclass = c("character", "Sym", "expr")) {
 	atoms <- sympySymbols(x)
 
 	if (is.null(param)) param <- atoms
@@ -109,11 +117,13 @@ as.function.Sym <- function(x, param = NULL, retclass = c("character", "Sym")) {
 	f
 }
 
+as.expression.Sym <- function(x) sympy(unclass(x), retclass = "expr")
+
 t.Sym <- function(x) Sym(paste("(", x, ").transpose()"))
 
 # static factories
 
-Var <- function(x, retclass = c("Sym", "character")) {
+Var <- function(x, retclass = c("Sym", "character", "expr")) {
 	x <- paste("var('", x, "')", sep = "")
 	sympy(x, retclass = if (is.null(retclass)) NULL else match.arg(retclass))
 }

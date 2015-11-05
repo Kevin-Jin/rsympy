@@ -19,17 +19,24 @@ sympyStart <- function() {
 	assign('.SympyConnected', TRUE)
 }
 
-sympy <- function(..., retclass = c("character", "Sym"), debug = FALSE) {
+sympy <- function(..., retclass = c("character", "Sym", "expr"), debug = FALSE) {
 	if (!exists(".SympyConnected", .GlobalEnv)) sympyStart()
 	retclass <- if (is.null(retclass)) NULL else match.arg(retclass)
 	if (!is.null(retclass)) {
 		pyExec("__Rsympy=None")
 		pyExecp(paste("__Rsympy=", ..., sep = ""))
 		if (debug) pyExecp("print(__Rsympy)")
-		pyExec("__Rsympy = str(__Rsympy)")
-		out <- pyGet("__Rsympy")
-		if (!is.null(out) && retclass == "Sym") structure(out, class = "Sym")
-		else out
+		if (retclass == "expr") {
+			pyExec("if isinstance(__Rsympy, Expr): __Rsympy = mathml(__Rsympy)\n")
+			out <- pyGet("__Rsympy")
+			# TODO: parse MathML
+			out
+		} else {
+			pyExec("__Rsympy = str(__Rsympy)")
+			out <- pyGet("__Rsympy")
+			if (!is.null(out) && retclass == "Sym") structure(out, class = "Sym")
+			else out
+		}
 	} else pyExecp(paste(...))
 }
 
