@@ -42,4 +42,52 @@ sympySymbols <- function(x, debug = FALSE) {
 	pyGet("__Rsympy")
 }
 
+sympyEvalf <- function(x, subs, retclass = c("character", "Sym", "expr")) {
+	if (!exists(".SympyConnected", .GlobalEnv)) sympyStart()
+	pyDict("__Rsympy", subs, regFinalizer = FALSE) # immediately overwrite the dict so no need to del(__Rsympy)
+	pyExecp(paste("__Rsympy=(", x, ").evalf(subs = __Rsympy)", sep = ""))
+	if (!is.null(retclass)) {
+		if (retclass == "expr") {
+			pyExec("if isinstance(__Rsympy, Expr): __Rsympy = mathml(__Rsympy)\n")
+			out <- pyGet("__Rsympy")
+			# TODO: parse MathML
+			out
+		} else {
+			pyExec("__Rsympy = str(__Rsympy)")
+			out <- pyGet("__Rsympy")
+			if (!is.null(out) && retclass == "Sym") structure(out, class = "Sym")
+			else out
+		}
+	} else pyExecp("print(__Rsympy)")
+}
+
+sympyLambdify <- function(args, expr) {
+	if (!exists(".SympyConnected", .GlobalEnv)) sympyStart()
+	pyTuple("__Rsympy", args, regFinalizer = FALSE) # immediately overwrite the tuple so no need to del(__Rsympy)
+	pyExecp(paste("__Rsympy=lambdify(__Rsympy,", expr, ")", sep = ""))
+	pyFunction("__Rsympy")
+}
+
+executeLambda <- function(fn, args, retclass) {
+	# redirect the call to the Python function handle
+	args[[1]] <- fn
+	# order of parameters matters, but formal parameter names don't matter
+	#args <- unname(args)
+	# execute the function call
+	result <- eval(args)
+
+	if (!is.null(retclass)) {
+		if (retclass == "expr") {
+			out <- pyCall("mathml", result)
+			# TODO: parse MathML
+			out
+		} else {
+			out <- pyCall("str", result)
+			if (!is.null(out) && retclass == "Sym") structure(out, class = "Sym")
+			else out
+		}
+	} else pyCall("print", result)
+}
+
+
 
