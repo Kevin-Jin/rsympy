@@ -86,6 +86,7 @@ eval.Sym <- function(x, envir = parent.frame(), enclos = if(is.list(envir) || is
 # TODO: if retclass is Sym, pass all numbers to sympy.core.numbers.Number __new__
 as.function.Sym <- function(x, param = NULL, retclass = c("character", "Sym", "expr")) {
 	atoms <- sympySymbols(x)
+	if (is.numeric(atoms)) atoms <- NULL
 
 	if (is.null(param)) param <- atoms
 	stopifnot(is.character(param))
@@ -106,13 +107,16 @@ as.function.Sym <- function(x, param = NULL, retclass = c("character", "Sym", "e
 		}
 	}
 
-	f.param <- list()
-	length(f.param) <- length(param)
+	# getting the empty symbol (for formal arguments with no default value) is
+	# a bit hacky since as.name("") does not work
+	f.param <- rep(c(quote(f(emptyname=))$emptyname), length(param))
 	names(f.param) <- param
 
 	lambda <- sympyLambdify(param, x)
 	f <- function() executeLambda(lambda, match.call(), retclass)
 	formals(f) <- as.pairlist(f.param)
+
+	#reg.finalizer(environment(), function(obj) { str(f); str(obj); })
 
 	f
 }
@@ -122,6 +126,37 @@ as.expression.Sym <- function(x) sympy(unclass(x), retclass = "expr")
 t.Sym <- function(x) Sym(paste("(", x, ").transpose()"))
 
 # static factories
+
+as.Sym <- function(x) {
+	# basically equivalent to x <- quote(<this function's expression parameter>)
+	# from the caller's context
+	x <- substitute(x)
+
+	# in case the expr x makes reference to variables
+	# named e.g. x, env, unknown.symbols, or vars, we want
+	# to prevent this function's local variables from
+	# being improperly substituted into the passed expr x
+	env <- parent.frame()
+
+	# call objects can be recursively descended to get constants and names
+	unknown.symbols <- (f <- function(x) {
+		if (is.name(x)) # symbols
+			# eval() uses the same environment
+			if (!exists(as.character(x), where = env)) x else NULL
+		else if (!is.call(x)) # constants
+			# constants by definition are already known
+			NULL
+		else # nested function call/operator
+			# x[-1] to skip the function name. ignore unknown functions
+			unlist(lapply(x[-1], f))
+	})(x)
+
+	# substitute in those unknown symbols in x with declared SymPy symbols
+	vars <- unlist(lapply(unknown.symbols, as.character))
+	vars <- setNames(lapply(vars, Var), vars)
+
+	eval(x, envir = vars, enclos = env)
+}
 
 Var <- function(x, retclass = c("Sym", "character", "expr")) {
 	x <- paste("var('", x, "')", sep = "")
