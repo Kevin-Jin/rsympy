@@ -34,7 +34,7 @@ solve.Sym <- function(a, b, method = c("'GE'", "'ADJ'", "'LU'"), ...) {
 if (!isGenericS3("integrate")) setGenericS3("integrate", dontWarn = "stats")
 integrate.Sym <- function(x, lower = NULL, upper = NULL, name = coalesce(sympySymbols(x), "x"), ..., subdivisions = Inf, rel.tol = 0, abs.tol = 0, stop.on.error = TRUE, keep.xy = FALSE, aux = NULL) {
 	if (xor(is.numeric(lower), is.numeric(upper)))
-		stop("lower or upper must both be specified or both be unspecified")
+		stop("lower and upper must both be specified or both be unspecified")
 	if (!is.character(name) || length(name) == 0)
 		stop("name must be a string")
 
@@ -53,7 +53,7 @@ eval.Sym <- function(x, envir = parent.frame(), enclos = if(is.list(envir) || is
 	atoms <- sympySymbols(x)
 	if (is.numeric(atoms)) atoms <- NULL
 	if (length(atoms) == 0)
-		return(sympy(x, retclass = if (is.null(retclass)) NULL else match.arg(retclass)))
+		return(sympyEvalf(x, retclass = if (is.null(retclass)) NULL else match.arg(retclass)))
 
 	stopifnot(is.character(atoms))
 	vals <- numeric(length(atoms))

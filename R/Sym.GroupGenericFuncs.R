@@ -38,10 +38,22 @@ cummin.Sym <- function(x) stop(paste(match.call()[[1]], "() not implemented", se
 # Summary.Sym group generic overrides
 all.Sym <- function(x) stop(paste(match.call()[[1]], "() not implemented", sep = ""))
 any.Sym <- function(x) stop(paste(match.call()[[1]], "() not implemented", sep = ""))
-sum.Sym <- function(x) stop(paste(match.call()[[1]], "() not implemented", sep = ""))
-prod.Sym <- function(x) stop(paste(match.call()[[1]], "() not implemented", sep = ""))
-min.Sym <- function(x, na.rm = FALSE) Sym("Min(", x, ")")
-max.Sym <- function(x, na.rm = FALSE) Sym("Max(", x, ")")
+sum.Sym <- function(x, lower, upper, name = coalesce(sympySymbols(x), "x"), ...) {
+	if (!is.numeric(lower) || !is.numeric(upper))
+		stop("lower and upper must both be specified")
+
+	# TODO: use named arguments ... to plug into other variables as constants
+	Sym("Sum(", x, ",(", name[1], ",", lower[1], ",", upper[1], "))")
+}
+prod.Sym <- function(x, lower, upper, name = coalesce(sympySymbols(x), "x"), ...) {
+	if (!is.numeric(lower) || !is.numeric(upper))
+		stop("lower and upper must both be specified")
+
+	# TODO: use named arguments ... to plug into other variables as constants
+	Sym("Product(", x, ",(", name[1], ",", lower[1], ",", upper[1], "))")
+}
+min.Sym <- function(..., na.rm = FALSE) Sym("Min(", paste(..., sep = ","), ")")
+max.Sym <- function(..., na.rm = FALSE) Sym("Max(", paste(..., sep = ","), ")")
 range.Sym <- function(x) stop(paste(match.call()[[1]], "() not implemented", sep = ""))
 
 # Complex.Sym group generic overrides

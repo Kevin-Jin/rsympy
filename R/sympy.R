@@ -12,6 +12,7 @@ sympyStart <- function() {
 	pyExecp("import sys")
 	pyExecp( paste( "sys.path.append(", system.file( "Lib", package = "rSymPy" ), ")", sep = '"' ) )
 	pyExecp("from sympy import *")
+	pyExecp("from sympy.mpmath import *")
 	pyExecp("from sympy.printing.mathml import mathml")
 	pyExecp("from sympy.utilities.lambdify import lambdify")
 	pyExecp("from sympy.functions.special.gamma_functions import *")
@@ -40,19 +41,28 @@ sympy <- function(..., retclass = c("character", "Sym", "expr"), debug = FALSE) 
 	} else pyExecp(paste(...))
 }
 
+# if the returned value is.numeric, then there are no free symbols in x
 sympySymbols <- function(x, debug = FALSE) {
 	if (!exists(".SympyConnected", .GlobalEnv)) sympyStart()
 	pyExec("__Rsympy=None")
 	pyExecp(paste("__Rsympy=", x, sep = ""))
 	if (debug) pyExecp("print(__Rsympy)")
-	pyExec("if isinstance(__Rsympy, Expr): __Rsympy = [str(x) for x in list(__Rsympy.atoms(Symbol))]\n")
+	pyExec("if isinstance(__Rsympy, Expr): __Rsympy = [str(x) for x in list(__Rsympy.free_symbols)]\n")
+	# PythonInR bug "IndexError: list index out of range" when pyGet an empty list
+	pyExec("if len(__Rsympy) == 0: __Rsympy = [-1]\n")
 	pyGet("__Rsympy")
 }
 
 sympyEvalf <- function(x, subs, retclass = c("character", "Sym", "expr")) {
 	if (!exists(".SympyConnected", .GlobalEnv)) sympyStart()
-	pyDict("__Rsympy", subs, regFinalizer = FALSE) # immediately overwrite the dict so no need to del(__Rsympy)
-	pyExecp(paste("__Rsympy=(", x, ").evalf(subs = __Rsympy)", sep = ""))
+	if (!missing(subs) && is.numeric(subs)) {
+		pyDict("__Rsympy", subs, regFinalizer = FALSE) # immediately overwrite the dict so no need to del(__Rsympy)
+		pyExecp(paste("__Rsympy=(", x, ").evalf(subs = __Rsympy)", sep = ""))
+	} else {
+		pyExec("__Rsympy = None")
+		pyExecp(paste("__Rsympy=(", x, ").evalf()", sep = ""))
+	}
+	retclass <- if (is.null(retclass)) NULL else match.arg(retclass)
 	if (!is.null(retclass)) {
 		if (retclass == "expr") {
 			pyExec("if isinstance(__Rsympy, Expr): __Rsympy = mathml(__Rsympy)\n")
