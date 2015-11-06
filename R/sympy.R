@@ -12,7 +12,6 @@ sympyStart <- function() {
 	pyExecp("import sys")
 	pyExecp( paste( "sys.path.append(", system.file( "Lib", package = "rSymPy" ), ")", sep = '"' ) )
 	pyExecp("from sympy import *")
-	pyExecp("from sympy.mpmath import *")
 	pyExecp("from sympy.printing.mathml import mathml")
 	pyExecp("from sympy.utilities.lambdify import lambdify")
 	pyExecp("from sympy.functions.special.gamma_functions import *")
