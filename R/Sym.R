@@ -138,24 +138,95 @@ as.Sym <- function(x) {
 	# being improperly substituted into the passed expr x
 	env <- parent.frame()
 
-	# call objects can be recursively descended to get constants and names
-	unknown.symbols <- (f <- function(x) {
+	if (!is.call(x))
+		# no operations or function calls, just a single variable or constant
+		x <- as.call(list(quote(`identity`), x))
+
+	# call objects can be recursively descended to get constants and names.
+	# if a variable exists in R, use the value in the R variable.
+	# if a variable exists only in Python, use the value in the Python variable.
+	# otherwise, call Var() to create a new Python variable.
+	to.replace <- (f <- function(x) {
 		if (is.name(x)) # symbols
-			# eval() uses the same environment
-			if (!exists(as.character(x), where = env)) x else NULL
+			if (exists(as.character(x), where = env))
+				# Substitute in R variable that exists in the caller's context
+				NULL
+			else if (pythonHasVariable(as.character(x)))
+				# Sym(x): no R variable, but use the Python variable
+				as.character(x)
+			else
+				# Var(x): create a Python symbol
+				x
 		else if (!is.call(x)) # constants
-			# constants by definition are already known
-			NULL
+			if (is.nan(x))
+				# Python uses nan for not-a-number
+				"nan"
+			else if (x == Inf)
+				# SymPy represents infinity as two lowercase `o`s
+				"oo"
+			else
+				# constants by definition are already known
+				NULL
 		else # nested function call/operator
-			# x[-1] to skip the function name. ignore unknown functions
-			unlist(lapply(x[-1], f))
+			if (!exists(as.character(x), where = env))
+				# x[-1] to skip the function name
+				c(setNames(list(NA), 1), unlist(setNames(lapply(x[-1], f), 2:length(x))))
+			else
+				# x[-1] to skip the function name
+				unlist(setNames(lapply(x[-1], f), 2:length(x)))
 	})(x)
 
-	# substitute in those unknown symbols in x with declared SymPy symbols
+	if (!is.list(to.replace))
+		# characters only
+		to.replace <- as.list(to.replace)
+
+	# in the case of passing through functions to SymPy, reversing the list
+	# substitutes innermost function calls first, so addresses are not messed up
+	# for outermost function calls
+	to.replace <- rev(to.replace)
+
+	# pass-through literal Python symbols not found in R
+	unknown.symbols <- as.logical(unlist(lapply(to.replace, is.name)))
+	# because of copy-on-write and scoping issues when trying to modify a value
+	# in x inside another function, just keep carrying x-prime forward to the
+	# next transform and finally return the final image (thus Reduce())
+	x <- Reduce(function(x, name) {
+		# unlist() set names of nested lists [[i]][[j]][[k]] to "i.j.k"
+		address <- as.numeric(unlist(strsplit(name, ".", fixed = TRUE)))
+		# first child of any parent must be a function name
+		stopifnot(tail(address, 1) != 1 || length(x) == 1)
+		# creates an expression to access e.g. x[[3]][[2]] when address==c(3,2)
+		deref <- Reduce(function(acc, add) as.call(list(quote(`[[`), acc, add)), address, quote(x))
+		# finally, assign our replacement string to e.g. x[[3]][[2]]
+		eval(as.call(list(quote(`<-`), deref, quote(as.call(list(quote(Sym), to.replace[[name]]))))))
+		# carry the transformed x to the next transformation function
+		x
+	}, names(to.replace)[!is.na(to.replace) & !unknown.symbols], x)
+
+	# declare SymPy symbols for symbols not found in R or Python, and plug them in R
+	unknown.symbols <- to.replace[unknown.symbols]
 	vars <- unlist(lapply(unknown.symbols, as.character))
 	vars <- setNames(lapply(vars, Var), vars)
 
-	eval(x, envir = vars, enclos = env)
+	# pass through function names that aren't implemented in R to SymPy
+	x <- Reduce(function(x, name) {
+		# unlist() set names of nested lists [[i]][[j]][[k]] to "i.j.k"
+		address <- as.numeric(unlist(strsplit(name, ".", fixed = TRUE)))
+		# first child of any parent must be a function name
+		stopifnot(tail(address, 1) == 1)
+		# go to container for function call
+		deref <- Reduce(function(acc, add) as.call(list(quote(`[[`), acc, add)), head(address, -1), quote(x))
+		# get the function name
+		fn.name <- eval(deref)[[1]]
+		# get all right siblings (parameters to function)
+		arguments <- lapply(eval(deref)[-1], eval, envir = vars, enclos = env)
+		# replace e.g. x[[i]][[j]] with e.g. Sym(x[[i]][[j]][[1]], "(", x[[i]][[j]][[2]], x[[i]][[j]][[3]], ")")
+		eval(as.call(list(quote(`<-`), deref, quote(as.call(c(list(quote(Sym), as.character(fn.name), "("), arguments, list(")")))))))
+		# carry the transformed x to the next transformation function
+		x
+	}, names(to.replace)[is.na(to.replace)], x)
+
+	Sym(eval.default(x, envir = vars, enclos = env))
 }
 
 Var <- function(x, retclass = c("Sym", "character", "expr")) {

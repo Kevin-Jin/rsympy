@@ -105,5 +105,11 @@ executeLambda <- function(fn, args, retclass) {
 	} else pyCall("print", result)
 }
 
+pythonHasVariable <- function(x) {
+	pySet("__Rsympy", x)
+	pyExec("__Rsympy = __Rsympy in locals() or __Rsympy in globals()")
+	pyGet("__Rsympy")
+}
+
 
 
