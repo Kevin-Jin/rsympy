@@ -20,11 +20,11 @@ as.character.Sym <- function(x, ...) as.character(unclass(x))
 print.Sym <- function(x, ...) print(sympy(unclass(x), ...))
 
 deriv.Sym <- function(expr, name = coalesce(sympySymbols(expr), "x"), n = 1, ...) 
-	Sym("diff(", expr, ", ", name[1], ",", n, ")")
+	Sym("Derivative(", expr, ", ", name[1], ",", n, ").doit()")
 
 if (!isGenericS3("limit")) setGenericS3("limit")
 limit.Sym <- function(expr, name = coalesce(sympySymbols(expr), "x"), value) 
-	Sym("limit(", expr, ",", name[1], ",", value, ")")
+	Sym("Limit(", expr, ",", name[1], ",", value, ").doit()")
 
 solve.Sym <- function(a, b, method = c("'GE'", "'ADJ'", "'LU'"), ...) {
 	stopifnot(missing(b))
@@ -41,11 +41,18 @@ integrate.Sym <- function(x, lower = NULL, upper = NULL, name = coalesce(sympySy
 	# TODO: use named arguments ... to plug into other variables as constants
 	if (is.numeric(lower)) { # == is.numeric(upper)
 		# definite integral
-		Sym("integrate(", x, ",(", name[1], ",", lower[1], ",", upper[1], "))")
+		Sym("Integral(", x, ",(", name[1], ",", lower[1], ",", upper[1], ")).doit()")
 	} else {
 		# indefinite integral
-		Sym("integrate(", x, ",", name[1], ")")
+		Sym("Integral(", x, ",", name[1], ").doit()")
 	}
+
+	# TODO: if analytic integration fails, do numeric integration with quad()
+}
+
+# CDF
+pnorm.Sym <- function() {
+	
 }
 
 if (!isGenericS3("eval")) setGenericS3("eval", dontWarn = "base")
@@ -80,6 +87,19 @@ eval.Sym <- function(x, envir = parent.frame(), enclos = if(is.list(envir) || is
 	names(vals)[from.envir] <- atoms
 
 	sympyEvalf(x, vals, retclass = if (is.null(retclass)) NULL else match.arg(retclass))
+}
+
+# if (!isGenericS3("substitute")) setGenericS3("substitute", dontWarn = "base")
+# substitute.Sym <- function(expr, env = parent.frame()) {
+# 	# TODO: same as eval() but calls subs() function on expr instead of evalf()
+# }
+
+if (!isGenericS3("solve")) setGenericS3("solve", dontWarn = "base")
+solve.Sym <- function(x, y) {
+	# "try:solve(x,y) or None\nexcept(NotImplementedError):None\n"
+	# "if x != None: return x\n"
+	# "try:nsolve(x,y,0) or None\nexcept(ValueError):None\n"
+	# "if x == None: return x"
 }
 
 # AKA lambda(), turns an expression into an R function that can accept parameters
@@ -127,6 +147,8 @@ t.Sym <- function(x) Sym(paste("(", x, ").transpose()"))
 
 # static factories
 
+# TODO: replace `==`(a,b) with Eq(a,b) when (isinstance(a, Basic) || isinstance(b, Basic))
+# i.e. a or b is an expression that is some subclass of sympy.core.basic.Basic
 as.Sym <- function(x) {
 	# basically equivalent to x <- quote(<this function's expression parameter>)
 	# from the caller's context
@@ -141,6 +163,12 @@ as.Sym <- function(x) {
 	if (!is.call(x))
 		# no operations or function calls, just a single variable or constant
 		x <- as.call(list(quote(`identity`), x))
+
+	assign.to <- NULL
+	if (as.character(x[[1]]) == "<-") {
+		assign.to <- as.character(x[[2]])
+		x <- x[[3]]
+	}
 
 	# call objects can be recursively descended to get constants and names.
 	# if a variable exists in R, use the value in the R variable.
@@ -168,7 +196,10 @@ as.Sym <- function(x) {
 				# constants by definition are already known
 				NULL
 		else # nested function call/operator
-			if (!exists(as.character(x), where = env))
+			if (as.character(x[[1]]) == "<-")
+				# Python assignments are statements, not expressions
+				stop("Assignments are allowed only at the top level")
+			else if (!exists(as.character(x[[1]]), where = env))
 				# x[-1] to skip the function name
 				c(setNames(list(NA), 1), unlist(setNames(lapply(x[-1], f), 2:length(x))))
 			else
@@ -216,17 +247,35 @@ as.Sym <- function(x) {
 		stopifnot(tail(address, 1) == 1)
 		# go to container for function call
 		deref <- Reduce(function(acc, add) as.call(list(quote(`[[`), acc, add)), head(address, -1), quote(x))
+		deref.evaled <- eval(deref)
 		# get the function name
-		fn.name <- eval(deref)[[1]]
+		fn.name <- deref.evaled[[1]]
 		# get all right siblings (parameters to function)
-		arguments <- lapply(eval(deref)[-1], eval, envir = vars, enclos = env)
+		arguments <- setNames(lapply(deref.evaled[-1], eval, envir = vars, enclos = env), names(deref.evaled)[-1])
+		# prepend argument values with argument names
+		named.arguments <- names(arguments) != ""
+		arguments[named.arguments] <- paste(names(arguments)[named.arguments], arguments[named.arguments], sep = "=")
+		# quote strings
+		arguments <- lapply(arguments, function(arg)
+			if (is.character(arg) && !any(class(arg) == 'Sym'))
+				# R's escape sequences map directly to Python unicode strings,
+				# except for "\`" because backtick are not quotes in Python,
+				# but this doesn't matter since encodeString() quotes with "\"".
+				paste("u", encodeString(arg, quote = "\""), sep = "")
+			else
+				arg
+		)
 		# replace e.g. x[[i]][[j]] with e.g. Sym(x[[i]][[j]][[1]], "(", x[[i]][[j]][[2]], x[[i]][[j]][[3]], ")")
-		eval(as.call(list(quote(`<-`), deref, quote(as.call(c(list(quote(Sym), as.character(fn.name), "("), arguments, list(")")))))))
+		eval(as.call(list(quote(`<-`), deref, quote(as.call(c(list(quote(Sym), as.character(fn.name), "("), paste(arguments, collapse = ","), list(")")))))))
 		# carry the transformed x to the next transformation function
 		x
 	}, names(to.replace)[is.na(to.replace)], x)
 
-	Sym(eval.default(x, envir = vars, enclos = env))
+	output <- eval.default(x, envir = vars, enclos = env)
+	if (!is.null(assign.to))
+		output <- Sym(paste(assign.to, "=", output))
+
+	output
 }
 
 Var <- function(x, retclass = c("Sym", "character", "expr")) {

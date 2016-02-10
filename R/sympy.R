@@ -1,5 +1,9 @@
 
-sympyStart <- function() {
+# R is fundamentally single threaded, so we don't have to make anything thread
+# local or surround assignments and retrievals of __Rsympy in atomic blocks
+
+.onLoad <- function(libname, pkgname) {
+	if (exists(".SympyConnected", .GlobalEnv)) return()
 
 	# like system.file but on Windows uses \ in path rather than /
 	system.file. <- function(...) {
@@ -12,15 +16,24 @@ sympyStart <- function() {
 	pyExecp("import sys")
 	pyExecp( paste( "sys.path.append(", system.file( "Lib", package = "rSymPy" ), ")", sep = '"' ) )
 	pyExecp("from sympy import *")
+	pyExecp("from sympy.stats import *")
+	pyExecp("from sympy.solvers import nsolve")
 	pyExecp("from sympy.printing.mathml import mathml")
 	pyExecp("from sympy.utilities.lambdify import lambdify")
 	pyExecp("from sympy.functions.special.gamma_functions import *")
 
-	assign('.SympyConnected', TRUE)
+	invisible(assign('.SympyConnected', TRUE, pos = .GlobalEnv))
+}
+
+.onUnload <- function(libname, pkgname) {
+	if (!exists(".SympyConnected", .GlobalEnv)) return()
+
+	if (pyIsConnected()) pyExit()
+
+	invisible(remove('.SympyConnected', pos = .GlobalEnv))
 }
 
 sympy <- function(..., retclass = c("character", "Sym", "expr"), debug = FALSE) {
-	if (!exists(".SympyConnected", .GlobalEnv)) sympyStart()
 	retclass <- if (is.null(retclass)) NULL else match.arg(retclass)
 	if (!is.null(retclass)) {
 		pyExec("__Rsympy=None")
@@ -42,7 +55,6 @@ sympy <- function(..., retclass = c("character", "Sym", "expr"), debug = FALSE) 
 
 # if the returned value is.numeric, then there are no free symbols in x
 sympySymbols <- function(x, debug = FALSE) {
-	if (!exists(".SympyConnected", .GlobalEnv)) sympyStart()
 	pyExec("__Rsympy=None")
 	pyExecp(paste("__Rsympy=", x, sep = ""))
 	if (debug) pyExecp("print(__Rsympy)")
@@ -53,7 +65,6 @@ sympySymbols <- function(x, debug = FALSE) {
 }
 
 sympyEvalf <- function(x, subs, retclass = c("character", "Sym", "expr")) {
-	if (!exists(".SympyConnected", .GlobalEnv)) sympyStart()
 	if (!missing(subs) && is.numeric(subs)) {
 		pyDict("__Rsympy", subs, regFinalizer = FALSE) # immediately overwrite the dict so no need to del(__Rsympy)
 		pyExecp(paste("__Rsympy=(", x, ").evalf(subs = __Rsympy)", sep = ""))
@@ -78,7 +89,6 @@ sympyEvalf <- function(x, subs, retclass = c("character", "Sym", "expr")) {
 }
 
 sympyLambdify <- function(args, expr) {
-	if (!exists(".SympyConnected", .GlobalEnv)) sympyStart()
 	pyTuple("__Rsympy", args, regFinalizer = FALSE) # immediately overwrite the tuple so no need to del(__Rsympy)
 	pyExecp(paste("__Rsympy=lambdify(__Rsympy,", expr, ")", sep = ""))
 	pyFunction("__Rsympy")

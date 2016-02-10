@@ -43,14 +43,14 @@ sum.Sym <- function(x, lower, upper, name = coalesce(sympySymbols(x), "x"), ...)
 		stop("lower and upper must both be specified")
 
 	# TODO: use named arguments ... to plug into other variables as constants
-	Sym("Sum(", x, ",(", name[1], ",", lower[1], ",", upper[1], "))")
+	Sym("Sum(", x, ",(", name[1], ",", lower[1], ",", upper[1], ")).doit()")
 }
 prod.Sym <- function(x, lower, upper, name = coalesce(sympySymbols(x), "x"), ...) {
 	if (!is.numeric(lower) || !is.numeric(upper))
 		stop("lower and upper must both be specified")
 
 	# TODO: use named arguments ... to plug into other variables as constants
-	Sym("Product(", x, ",(", name[1], ",", lower[1], ",", upper[1], "))")
+	Sym("Product(", x, ",(", name[1], ",", lower[1], ",", upper[1], ")).doit()")
 }
 min.Sym <- function(..., na.rm = FALSE) Sym("Min(", paste(..., sep = ","), ")")
 max.Sym <- function(..., na.rm = FALSE) Sym("Max(", paste(..., sep = ","), ")")
@@ -62,6 +62,3 @@ Conj.Sym <- function(x) Sym("conjugate(", x, ")")
 Im.Sym <- function(x) Sym("im(", x, ")")
 Mod.Sym <- function(x) abs(x)
 Re.Sym <- function(x) Sym("re(", x, ")")
-
-# TODO: autogenerate wrappers with setGenericS3() for all functions in http://docs.sympy.org/dev/modules/functions/index.html#contents
-# that are not in transtab[, 3] and do not have a method named "xxx.Sym"
