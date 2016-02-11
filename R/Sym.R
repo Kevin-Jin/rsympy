@@ -170,13 +170,20 @@ as.Sym <- function(x) {
 		x <- x[[3]]
 	}
 
+	# Conditions are based on the observation that the call:
+	# is.function(eval(as.call(list(quote(`function`), as.pairlist(alist(x=)), NULL))))
+	# is TRUE for pretty much any value for the 3rd element in the call object.
+	is.closure <- function(call.obj)
+		# x[[2]] is formal parameters, x[[3]] is body, x[[4]] is debug info.
+		as.character(call.obj[[1]]) == "function" && is.pairlist(call.obj[[2]]) && length(call.obj) >= 3
+
 	# call objects can be recursively descended to get constants and names.
 	# if a variable exists in R, use the value in the R variable.
 	# if a variable exists only in Python, use the value in the Python variable.
 	# otherwise, call Var() to create a new Python variable.
-	to.replace <- (f <- function(x) {
+	to.replace <- (f <- function(x, ignore = NULL) {
 		if (is.name(x)) # symbols
-			if (exists(as.character(x), where = env))
+			if (exists(as.character(x), where = env) || as.character(x) %in% ignore)
 				# Substitute in R variable that exists in the caller's context
 				NULL
 			else if (pythonHasVariable(as.character(x)))
@@ -206,16 +213,19 @@ as.Sym <- function(x) {
 			else
 				# constants by definition are already known
 				NULL
+		else if (is.closure(x)) # function declaration
+			# don't create any SymPy symbols for usages of the formal parameters
+			unlist(c(`1` = NA, `3` = f(x[[3]], names(x[[2]]))))
 		else # nested function call/operator
 			if (as.character(x[[1]]) == "<-")
 				# Python assignments are statements, not expressions
 				stop("Assignments are allowed only at the top level")
 			else if (!exists(as.character(x[[1]]), where = env))
 				# x[-1] to skip the function name
-				c(setNames(list(NA), 1), unlist(setNames(lapply(x[-1], f), if (length(x) > 1) 2:length(x) else c())))
+				c(setNames(list(NA), 1), unlist(setNames(lapply(x[-1], f, ignore), if (length(x) > 1) 2:length(x) else c())))
 			else
 				# x[-1] to skip the function name
-				unlist(setNames(lapply(x[-1], f), if (length(x) > 1) 2:length(x) else c()))
+				unlist(setNames(lapply(x[-1], f, ignore), if (length(x) > 1) 2:length(x) else c()))
 	})(x)
 
 	if (!is.list(to.replace))
@@ -250,7 +260,10 @@ as.Sym <- function(x) {
 	vars <- unlist(lapply(unknown.symbols, as.character))
 	vars <- setNames(lapply(vars, Var), vars)
 
-	# pass through function names that aren't implemented in R to SymPy
+	# process lambdas and pass through function names that aren't implemented in R to SymPy.
+	# Both kinds of replacements replace entire R expression trees with strings
+	# of Python code, so deepest replacements of EITHER kind must be done before
+	# any replacements towards the root of the expression tree
 	x <- Reduce(function(x, name) {
 		# unlist() set names of nested lists [[i]][[j]][[k]] to "i.j.k"
 		address <- as.numeric(unlist(strsplit(name, ".", fixed = TRUE)))
@@ -259,6 +272,21 @@ as.Sym <- function(x) {
 		# go to container for function call
 		deref <- Reduce(function(acc, add) as.call(list(quote(`[[`), acc, add)), head(address, -1), quote(x))
 		deref.evaled <- eval(deref)
+
+		# branch for lambda instead of pass through function name processing
+		if (is.closure(deref.evaled)) {
+			fn.formals <- names(deref.evaled[[2]])
+			fn.body <- deref.evaled[[3]]
+			if (class(fn.body) == "{")
+				# Python doesn't support multiline anonymous functions
+				stop("Multi-statement lambdas not yet translatable")
+
+			fn.body <- eval(fn.body, envir = c(vars, setNames(lapply(fn.formals, Sym), fn.formals)), enclos = env) # deparse(fn.body)
+			fn.formals <- paste(fn.formals, collapse = ",")
+			eval(as.call(list(quote(`<-`), deref, quote(as.call(list(quote(Sym), "lambda", fn.formals, ":", fn.body))))))
+			return(x)
+		}
+
 		# get the function name
 		fn.name <- deref.evaled[[1]]
 		# get all right siblings (parameters to function)
