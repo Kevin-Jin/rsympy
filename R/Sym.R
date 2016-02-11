@@ -186,12 +186,23 @@ as.Sym <- function(x) {
 				# Var(x): create a Python symbol
 				x
 		else if (!is.call(x)) # constants
-			if (is.nan(x))
-				# Python uses nan for not-a-number
+			if (is.null(x) || is.na(x))
+				# Python uses None for NULL
+				"None"
+			else if (is.nan(x))
+				# Python uses float("nan") for not-a-number
+				#"float(\"NaN\")"
 				"nan"
-			else if (x == Inf)
-				# SymPy represents infinity as two lowercase `o`s
+			else if (is.infinite(x))
+				# Python uses float("inf") for positive infinity
+				#"float(\"Inf\")"
 				"oo"
+			else if (identical(x, TRUE))
+				# Python uses camel case booleans
+				"True"
+			else if (identical(x, FALSE))
+				# Python uses camel case booleans
+				"False"
 			else
 				# constants by definition are already known
 				NULL
@@ -201,10 +212,10 @@ as.Sym <- function(x) {
 				stop("Assignments are allowed only at the top level")
 			else if (!exists(as.character(x[[1]]), where = env))
 				# x[-1] to skip the function name
-				c(setNames(list(NA), 1), unlist(setNames(lapply(x[-1], f), 2:length(x))))
+				c(setNames(list(NA), 1), unlist(setNames(lapply(x[-1], f), if (length(x) > 1) 2:length(x) else c())))
 			else
 				# x[-1] to skip the function name
-				unlist(setNames(lapply(x[-1], f), 2:length(x)))
+				unlist(setNames(lapply(x[-1], f), if (length(x) > 1) 2:length(x) else c()))
 	})(x)
 
 	if (!is.list(to.replace))
@@ -255,14 +266,27 @@ as.Sym <- function(x) {
 		# prepend argument values with argument names
 		named.arguments <- names(arguments) != ""
 		arguments[named.arguments] <- paste(names(arguments)[named.arguments], arguments[named.arguments], sep = "=")
-		# quote strings
 		arguments <- lapply(arguments, function(arg)
-			if (is.character(arg) && !any(class(arg) == 'Sym'))
+			if (inherits(arg, "Date"))
+				# create datetime.date instance
+				Sym("date(", as.integer(format(arg, "%Y")), ",", as.integer(format(arg, "%m")), ",", as.integer(format(arg, "%d")), ")")
+			else if (inherits(arg, "POSIXt"))
+				# create datetime.datetime instance
+				Sym("datetime(", (arg <- as.POSIXlt(arg))$year + 1900, ",", arg$mon + 1, ",", arg$mday, ",", arg$hour, ",", arg$min, ",", trunc(arg$sec), ",", round((arg$sec %% 1) * 1000000), if (!is.null(arg$gmtoff)) paste(",timezone(timedelta(seconds = ", arg$gmtoff, "))") else "", ")")
+			else if (inherits(arg, "difftime"))
+				# create datetime.timedelta instance
+				Sym("timedelta(0,", as.double(arg, units = "secs"), ")")
+			else if (is.complex(arg))
+				# R formats with a+bi. Python formats with a+bj.
+				Sym(paste(Re(arg), "+", Im(arg), "j", sep = ""))
+			else if (is.character(arg) && !any(class(arg) == 'Sym'))
+				# quote strings
 				# R's escape sequences map directly to Python unicode strings,
 				# except for "\`" because backtick are not quotes in Python,
 				# but this doesn't matter since encodeString() quotes with "\"".
-				paste("u", encodeString(arg, quote = "\""), sep = "")
+				Sym(paste("u", encodeString(arg, quote = "\""), sep = ""))
 			else
+				# pass-through
 				arg
 		)
 		# replace e.g. x[[i]][[j]] with e.g. Sym(x[[i]][[j]][[1]], "(", x[[i]][[j]][[2]], x[[i]][[j]][[3]], ")")

@@ -14,6 +14,7 @@
 	if (!pyIsConnected()) pyConnect()
 
 	pyExecp("import sys")
+	pyExecp("from datetime import *")
 	pyExecp( paste( "sys.path.append(", system.file( "Lib", package = "rSymPy" ), ")", sep = '"' ) )
 	pyExecp("from sympy import *")
 	pyExecp("from sympy.stats import *")
@@ -32,6 +33,90 @@
 
 	invisible(remove('.SympyConnected', pos = .GlobalEnv))
 }
+
+pyGetPoly <- PythonInR:::pyGetPoly
+setMethod("pyGetPoly", signature(key = "character", autoTypecast = "logical", simplify = "logical", pyClass = "complex"), function(key, autoTypecast, simplify, pyClass)
+	do.call(complex, as.list(pyExecg(sprintf("%s = [1, (%s).real, (%s).imag]", paste(key, "0", sep = ""), key, key))[[paste(key, "0", sep = "")]]))
+)
+
+setMethod("pyGetPoly", signature(key = "character", autoTypecast = "logical", simplify = "logical", pyClass = "list"), function(key, autoTypecast, simplify, pyClass) {
+	is.scalar <- function(cond) return(function(x) length(x) == 1 && cond(x))
+	homogenous <- function(x) all((type <- unlist(lapply(x, mode)))[1] == type)
+	list.is <- function(x, cond) all(unlist(lapply(x, cond)))
+
+	# Not sure why pyGetPoly() call doesn't cause infinite recursion, but it
+	# doesn't, so it's a good way to call the super() method pyGetSimple()!
+	base <- pyGetPoly(key, autoTypecast, simplify, "list")
+	if (length(base) > 0) {
+		non.numeric <- !unlist(lapply(base, is.scalar(is.numeric)))
+		base[non.numeric] <- lapply(which(non.numeric) - 1, function(i) {
+			pyExecp(sprintf("%s = (%s)[%d]", paste(key, "0", sep = ""), key, i))
+			pyGet(paste(key, "0", sep = ""), autoTypecast, simplify)
+		})
+		if (simplify && list.is(base, is.scalar(is.vector)) && homogenous(base))
+			base <- unlist(base)
+	}
+	base
+})
+
+timedelta.to.difftime <- function(pyObj)
+	as.difftime(pyObj$days, units = "days") + as.difftime(pyObj$seconds + pyObj$microseconds / 1000000, units = "secs")
+
+set.time <- function(pyObj) {
+	tz.name <- pyObj$tzname()
+	if (!is.null(tz.name))
+		rObj <- as.POSIXlt(Sys.time(), tz = tz.name)
+	else
+		rObj <- as.POSIXlt(Sys.time())
+	tz.offset <- pyObj$utcoffset()
+	if (!is.null(tz.offset))
+		rObj$gmtoff <- as.double(timedelta.to.difftime(tz.offset), units = "secs")
+
+	rObj$hour <- pyObj$hour
+	rObj$min <- pyObj$minute
+	rObj$sec <- pyObj$second + pyObj$microsecond / 1000000
+	rObj
+}
+
+setClass("datetime")
+setMethod("pyGetPoly", signature(key = "character", autoTypecast = "logical", simplify = "logical", pyClass = "datetime"), function(key, autoTypecast, simplify, pyClass) {
+	pyObj <- pyGetPoly(key, autoTypecast, simplify, "datetime")
+	# See PythonInR::pyTransformReturn()
+	pyObj <- pyObject(sprintf("__R__.namespace[%i]", pyObj$id))
+	rObj <- set.time(pyObj)
+	rObj$year <- pyObj$year - 1900
+	rObj$mon <- pyObj$month - 1
+	rObj$mday <- pyObj$day
+	rObj
+})
+
+setClass("time")
+setMethod("pyGetPoly", signature(key = "character", autoTypecast = "logical", simplify = "logical", pyClass = "time"), function(key, autoTypecast, simplify, pyClass) {
+	pyObj <- pyGetPoly(key, autoTypecast, simplify, "time")
+	# See PythonInR::pyTransformReturn()
+	pyObj <- pyObject(sprintf("__R__.namespace[%i]", pyObj$id))
+	rObj <- set.time(pyObj)
+	rObj$year <- 0
+	rObj$mon <- 0
+	rObj$mday <- 1
+	rObj
+})
+
+setClass("date")
+setMethod("pyGetPoly", signature(key = "character", autoTypecast = "logical", simplify = "logical", pyClass = "date"), function(key, autoTypecast, simplify, pyClass) {
+	pyObj <- pyGetPoly(key, autoTypecast, simplify, "date")
+	# See PythonInR::pyTransformReturn()
+	pyObj <- pyObject(sprintf("__R__.namespace[%i]", pyObj$id))
+	as.Date(pyObj$isoformat())
+})
+
+setClass("timedelta")
+setMethod("pyGetPoly", signature(key = "character", autoTypecast = "logical", simplify = "logical", pyClass = "timedelta"), function(key, autoTypecast, simplify, pyClass) {
+	pyObj <- pyGetPoly(key, autoTypecast, simplify, "timedelta")
+	# See PythonInR::pyTransformReturn()
+	pyObj <- pyObject(sprintf("__R__.namespace[%i]", pyObj$id))
+	timedelta.to.difftime(pyObj)
+})
 
 sympy <- function(..., retclass = c("character", "Sym", "expr"), debug = FALSE) {
 	retclass <- if (is.null(retclass)) NULL else match.arg(retclass)
