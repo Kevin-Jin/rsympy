@@ -236,6 +236,10 @@ as.Sym <- function(x) {
 	pass.through.function <- function(deref.evaled, uneval = FALSE) {
 		# get the function name
 		fn.name <- deref.evaled[[1]]
+		if (is.call(fn.name))
+			fn.name <- eval(fn.name)
+		else
+			fn.name <- deparse(fn.name)
 		# get all right siblings (parameters to function)
 		arguments <- setNames(lapply(deref.evaled[-1], eval, envir = vars, enclos = env), names(deref.evaled)[-1])
 		# prepend argument values with argument names
@@ -243,9 +247,23 @@ as.Sym <- function(x) {
 		arguments[named.arguments] <- paste(names(arguments)[named.arguments], arguments[named.arguments], sep = "=")
 		arguments <- lapply(arguments, r.to.Sym)
 		if (uneval)
-			bquote(as.call(.(c(list(quote(Sym), deparse(fn.name), "("), paste(arguments, collapse = ","), list(")")))))
+			bquote(as.call(.(c(list(quote(Sym), fn.name, "("), paste(arguments, collapse = ","), list(")")))))
 		else
-			Sym(deparse(fn.name), "(", paste(arguments, collapse = ","), ")")
+			Sym(fn.name, "(", paste(arguments, collapse = ","), ")")
+	}
+
+	unnest.parentheses <- function(x, address) {
+		if (length(address) < 2)
+			return(NULL)
+
+		deref <- Reduce(function(acc, add) as.call(list(quote(`[[`), acc, add)), head(address, -2), quote(x))
+		deref.evaled <- eval(deref)
+		fn <- deparse(deref.evaled[[1]])
+		if (length(fn) != 1 || fn != "(")
+			return(NULL)
+
+		eval(as.call(list(quote(`<-`), deref, quote(deref.evaled[[2]]))))
+		return(x)
 	}
 
 	# tuple
@@ -320,6 +338,9 @@ as.Sym <- function(x) {
 			else if (deparse(x[[1]]) == ".")
 				# don't parse following symbol as R but as Python
 				unlist(setNames(lapply(x[-1], f, ignore, pyEval = TRUE), if (length(x) > 1) 2:length(x) else c()))
+			else if (is.call(x[[1]]))
+				# the function we call is itself a function that returns a closure
+				unlist(setNames(lapply(x, f, ignore), if (length(x) > 0) 1:length(x) else c()))
 			else if (deparse(x[[1]]) %in% ignore || !exists(deparse(x[[1]]), where = env) || pyEval)
 				# x[-1] to skip the function name. NA means use Python function
 				c(list(`1` = NA), unlist(setNames(lapply(x[-1], f, ignore), if (length(x) > 1) 2:length(x) else c())))
@@ -418,11 +439,25 @@ as.Sym <- function(x) {
 			fn.formals <- paste(fn.formals, collapse = ",")
 
 			eval(as.call(list(quote(`<-`), deref, quote(as.call(list(quote(Sym), "lambda", fn.formals, ":", fn.body))))))
-			return(x)
+		} else {
+			# replace e.g. x[[i]][[j]] with e.g. Sym(x[[i]][[j]][[1]], "(", x[[i]][[j]][[2]], x[[i]][[j]][[3]], ")")
+			eval(as.call(list(quote(`<-`), deref, pass.through.function(deref.evaled, uneval = TRUE))))
 		}
 
-		# replace e.g. x[[i]][[j]] with e.g. Sym(x[[i]][[j]][[1]], "(", x[[i]][[j]][[2]], x[[i]][[j]][[3]], ")")
-		eval(as.call(list(quote(`<-`), deref, pass.through.function(deref.evaled, uneval = TRUE))))
+		while (!is.null(new.x <- unnest.parentheses(x, address))) {
+			x <- new.x
+			address <- address[-(length(address) - 1)]
+		}
+
+		if (length(address) >= 2 && head(tail(address, 2), 1) == 1) {
+			# e.g. we're processing f(), where f() is used in the call (f())().
+			# f() is now substituted with a Sym, but Sym("f()")() can't be
+			# called, so replace our parent call with Sym("f()()")
+			deref <- Reduce(function(acc, add) as.call(list(quote(`[[`), acc, add)), head(address, -2), quote(x))
+			deref.evaled <- eval(deref)
+			eval(as.call(list(quote(`<-`), deref, pass.through.function(deref.evaled, uneval = TRUE))))
+		}
+
 		# carry the transformed x to the next transformation function
 		x
 	}, names(to.replace)[is.na(to.replace)], x)
