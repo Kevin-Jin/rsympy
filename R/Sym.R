@@ -338,6 +338,14 @@ as.Sym <- function(x) {
 			else if (deparse(x[[1]]) == ".")
 				# don't parse following symbol as R but as Python
 				unlist(setNames(lapply(x[-1], f, ignore, pyEval = TRUE), if (length(x) > 1) 2:length(x) else c()))
+			else if (deparse(x[[1]]) == "$")
+				# member operator
+				if (!is.null(container <- f(x[[2]], ignore)) || pyEval)
+					# y is a Python variable. y$a -> y.a
+					unlist(c(`1` = NA, `2` = container, `3` = deparse(x[[3]])))
+				else
+					# y is an R variable. evaluate y$a, no translation needed
+					NULL
 			else if (is.call(x[[1]]))
 				# the function we call is itself a function that returns a closure
 				unlist(setNames(lapply(x, f, ignore), if (length(x) > 0) 1:length(x) else c()))
@@ -439,6 +447,9 @@ as.Sym <- function(x) {
 			fn.formals <- paste(fn.formals, collapse = ",")
 
 			eval(as.call(list(quote(`<-`), deref, quote(as.call(list(quote(Sym), "lambda", fn.formals, ":", fn.body))))))
+		} else if (deparse(deref.evaled[[1]]) == "$") {
+			sides <- lapply(deref.evaled[-1], eval, envir = vars, enclos = env)
+			eval(as.call(list(quote(`<-`), deref, quote(as.call(list(quote(Sym), sides[[1]], ".", sides[[2]]))))))
 		} else {
 			# replace e.g. x[[i]][[j]] with e.g. Sym(x[[i]][[j]][[1]], "(", x[[i]][[j]][[2]], x[[i]][[j]][[3]], ")")
 			eval(as.call(list(quote(`<-`), deref, pass.through.function(deref.evaled, uneval = TRUE))))
