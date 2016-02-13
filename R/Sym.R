@@ -168,7 +168,7 @@ as.Sym <- function(x) {
 	# named e.g. x, env, unknown.symbols, or vars, we want
 	# to prevent this function's local variables from
 	# being improperly substituted into the passed expr x
-	env <- parent.frame()
+	env <- new.env(parent = parent.frame())
 
 	# Conditions are based on the observation that the call:
 	# is.function(eval(as.call(list(quote(`function`), as.pairlist(alist(x=)), NULL))))
@@ -177,8 +177,40 @@ as.Sym <- function(x) {
 		# x[[2]] is formal parameters, x[[3]] is body, x[[4]] is debug info.
 		deparse(call.obj[[1]]) == "function" && is.pairlist(call.obj[[2]]) && length(call.obj) >= 3
 
+	to.jagged.array <- function(x) {
+		# Base case: already 1 dimensional
+		if (is.null(dim(x)) || length(dim(x)) == 1 || dim(x)[1] == 1)
+			if (length(x) == 1)
+				# Scalar
+				return(unname(do.call(c, as.list(x))))
+			else
+				# List
+				return(unname(as.list(x)))
+
+		# Peel off the first dimension, so that we create a list of rows
+		empty.indices <- rep(list(bquote()), length(dim(x)) - 1)
+		lapply(1:dim(x)[1], function(i)
+			to.jagged.array(do.call(`[`, c(list(quote(x), i), empty.indices)))
+		)
+	}
+
+	jagged.array.to.Sym <- function(arg) {
+		if (!is.list(arg))
+			return(r.to.Sym(arg))
+
+		Sym("[", paste(lapply(arg, function(x) {
+			if (is.list(x))
+				jagged.array.to.Sym(x)
+			else
+				r.to.Sym(x)
+		}), collapse = ","), "]")
+	}
+
 	r.to.Sym <- function(arg) {
-		if (inherits(arg, "Date"))
+		if (!is.null(dim(arg)) || length(arg) != 1 || is.list(arg))
+			# mutual recursion
+			jagged.array.to.Sym(to.jagged.array(arg))
+		else if (inherits(arg, "Date"))
 			# create datetime.date instance
 			Sym("date(", as.integer(format(arg, "%Y")), ",", as.integer(format(arg, "%m")), ",", as.integer(format(arg, "%d")), ")")
 		else if (inherits(arg, "POSIXt"))
@@ -216,27 +248,43 @@ as.Sym <- function(x) {
 			Sym(deparse(fn.name), "(", paste(arguments, collapse = ","), ")")
 	}
 
+	# tuple
+	env$pl <- function(...)
+		Sym(paste("(", paste(lapply(list(...), function(x) as.Sym(x)), collapse = ","), ")"))
+
+	env$as.pl <- function(lst) do.call(env$pl, as.list(lst))
+
+	# pyEval
+	env$`.` <- function(...) {
+		args <- list(...)
+		args[Position(is.null, args)] <- "NULL"
+		do.call(Sym, args)
+	}
+
 	# call objects can be recursively descended to get constants and names.
 	# if a variable exists in R, use the value in the R variable.
 	# if a variable exists only in Python, use the value in the Python variable.
 	# otherwise, call Var() to create a new Python variable.
-	to.replace <- as.list((f <- function(x, ignore = NULL) {
+	to.replace <- as.list((f <- function(x, ignore = NULL, pyEval = FALSE) {
 		if (is.name(x)) # symbols
-			if (exists(as.character(x), where = env) || as.character(x) %in% ignore)
+			if (exists(deparse(x), where = env) && !pyEval || deparse(x) %in% ignore)
 				if (is.function(fn <- eval(x)))
 					# Replace the function handle with a closure
 					fn
 				else
 					# Substitute in R variable that exists in caller's context
 					NULL
-			else if (pythonHasVariable(as.character(x)))
+			else if (pythonHasVariable(deparse(x)))
 				# Sym(x): no R variable, but use the Python variable
-				as.character(x)
+				deparse(x)
 			else
 				# Var(x): create a Python symbol
 				x
 		else if (!is.call(x)) # constants
-			if (is.null(x) || is.na(x))
+			if (pyEval)
+				# in case Python has a variable named e.g. FALSE, do not touch
+				NULL
+			else if (is.null(x) || is.na(x))
 				# Python uses None for NULL
 				"None"
 			else if (is.nan(x))
@@ -263,7 +311,10 @@ as.Sym <- function(x) {
 			if (deparse(x[[1]]) == "<-")
 				# Python assignments are statements, not expressions
 				stop("Assignments are allowed only at the top level")
-			else if (!exists(deparse(x[[1]]), where = env))
+			else if (deparse(x[[1]]) == ".")
+				# don't parse following symbol as R but as Python
+				unlist(setNames(lapply(x[-1], f, ignore, pyEval = TRUE), if (length(x) > 1) 2:length(x) else c()))
+			else if (!exists(deparse(x[[1]]), where = env) || pyEval)
 				# x[-1] to skip the function name. NA means use Python function
 				c(list(`1` = NA), unlist(setNames(lapply(x[-1], f, ignore), if (length(x) > 1) 2:length(x) else c())))
 			else
@@ -324,7 +375,7 @@ as.Sym <- function(x) {
 
 	# declare SymPy symbols for symbols not found in R or Python, and plug them in R
 	unknown.symbols <- to.replace[unknown.symbols]
-	vars <- unlist(lapply(unknown.symbols, as.character))
+	vars <- unlist(lapply(unknown.symbols, deparse))
 	vars <- setNames(lapply(vars, Var), vars)
 
 	# process lambdas and pass through function names that aren't implemented in R to SymPy.
