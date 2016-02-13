@@ -267,7 +267,13 @@ as.Sym <- function(x) {
 	# otherwise, call Var() to create a new Python variable.
 	to.replace <- as.list((f <- function(x, ignore = NULL, pyEval = FALSE) {
 		if (is.name(x)) # symbols
-			if (exists(deparse(x), where = env) && !pyEval || deparse(x) %in% ignore)
+			if (deparse(x) == "")
+				# empty default value for a formal argument
+				NULL
+			else if (deparse(x) %in% ignore)
+				# Sym(x): make sure that formal parameter usages are never evaled
+				deparse(x)
+			else if (exists(deparse(x), where = env) && !pyEval)
 				if (is.function(fn <- eval(x)))
 					# Replace the function handle with a closure
 					fn
@@ -306,7 +312,7 @@ as.Sym <- function(x) {
 				NULL
 		else if (is.closure(x)) # function declaration
 			# don't create any SymPy symbols for usages of the formal parameters
-			unlist(c(`1` = NA, `3` = f(x[[3]], names(x[[2]]))))
+			unlist(c(`1` = NA, `2` = setNames(lapply(x[[2]], f, ignore), if (length(x[[2]]) > 0) 1:length(x[[2]]) else c()), `3` = f(x[[3]], c(ignore, names(x[[2]])))))
 		else # nested function call/operator
 			if (deparse(x[[1]]) == "<-")
 				# Python assignments are statements, not expressions
@@ -314,7 +320,7 @@ as.Sym <- function(x) {
 			else if (deparse(x[[1]]) == ".")
 				# don't parse following symbol as R but as Python
 				unlist(setNames(lapply(x[-1], f, ignore, pyEval = TRUE), if (length(x) > 1) 2:length(x) else c()))
-			else if (!exists(deparse(x[[1]]), where = env) || pyEval)
+			else if (deparse(x[[1]]) %in% ignore || !exists(deparse(x[[1]]), where = env) || pyEval)
 				# x[-1] to skip the function name. NA means use Python function
 				c(list(`1` = NA), unlist(setNames(lapply(x[-1], f, ignore), if (length(x) > 1) 2:length(x) else c())))
 			else
@@ -393,16 +399,24 @@ as.Sym <- function(x) {
 
 		# branch for lambda instead of pass through function name processing
 		if (is.closure(deref.evaled)) {
-			fn.formals <- names(deref.evaled[[2]])
+			fn.formals <- deref.evaled[[2]]
 			fn.body <- deref.evaled[[3]]
 			if (class(fn.body) == "{")
 				# Python doesn't support multiline anonymous functions
 				stop("Multi-statement lambdas not yet translatable")
 
-			fn.body <- eval(fn.body, envir = c(vars, setNames(lapply(fn.formals, Sym), fn.formals)), enclos = env)
-			fn.formals <- paste(fn.formals, collapse = ",")
+			fn.body <- eval(fn.body, envir = c(vars, setNames(lapply(names(fn.formals), Sym), names(fn.formals))), enclos = env)
 			fn.body <- r.to.Sym(fn.body)
-			# TODO: convert default values for formals into Python
+
+			fn.formals[unlist(lapply(fn.formals, deparse)) == ""] <- list(NULL)
+			# unlike in R, default values can't reference other formal parameters in Python, so no using fn.formals in envir
+			fn.formals <- lapply(fn.formals, eval, envir = vars, enclos = env)
+			fn.formals <- lapply(fn.formals, function(x) if (is.null(x)) NULL else r.to.Sym(x))
+			empty.defaults <- unlist(lapply(fn.formals, is.null))
+			fn.formals[empty.defaults] <- names(fn.formals)[empty.defaults]
+			fn.formals[!empty.defaults] <- paste(names(fn.formals)[!empty.defaults], fn.formals[!empty.defaults], sep = "=")
+			fn.formals <- paste(fn.formals, collapse = ",")
+
 			eval(as.call(list(quote(`<-`), deref, quote(as.call(list(quote(Sym), "lambda", fn.formals, ":", fn.body))))))
 			return(x)
 		}
