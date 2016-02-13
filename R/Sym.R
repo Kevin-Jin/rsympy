@@ -177,6 +177,45 @@ as.Sym <- function(x) {
 		# x[[2]] is formal parameters, x[[3]] is body, x[[4]] is debug info.
 		deparse(call.obj[[1]]) == "function" && is.pairlist(call.obj[[2]]) && length(call.obj) >= 3
 
+	r.to.Sym <- function(arg) {
+		if (inherits(arg, "Date"))
+			# create datetime.date instance
+			Sym("date(", as.integer(format(arg, "%Y")), ",", as.integer(format(arg, "%m")), ",", as.integer(format(arg, "%d")), ")")
+		else if (inherits(arg, "POSIXt"))
+			# create datetime.datetime instance
+			Sym("datetime(", (arg <- as.POSIXlt(arg))$year + 1900, ",", arg$mon + 1, ",", arg$mday, ",", arg$hour, ",", arg$min, ",", trunc(arg$sec), ",", round((arg$sec %% 1) * 1000000), if (!is.null(arg$gmtoff)) paste(",timezone(timedelta(seconds = ", arg$gmtoff, "))") else "", ")")
+		else if (inherits(arg, "difftime"))
+			# create datetime.timedelta instance
+			Sym("timedelta(0,", as.double(arg, units = "secs"), ")")
+		else if (is.complex(arg))
+			# R formats with a+bi. Python formats with a+bj.
+			Sym(paste(Re(arg), "+", Im(arg), "j", sep = ""))
+		else if (is.character(arg) && !any(class(arg) == 'Sym'))
+			# quote strings
+			# R's escape sequences map directly to Python unicode strings,
+			# except for "\`" because backtick are not quotes in Python,
+			# but this doesn't matter since encodeString() quotes with "\"".
+			Sym(paste("u", encodeString(arg, quote = "\""), sep = ""))
+		else
+			# pass-through
+			arg
+	}
+
+	pass.through.function <- function(deref.evaled, uneval = FALSE) {
+		# get the function name
+		fn.name <- deref.evaled[[1]]
+		# get all right siblings (parameters to function)
+		arguments <- setNames(lapply(deref.evaled[-1], eval, envir = vars, enclos = env), names(deref.evaled)[-1])
+		# prepend argument values with argument names
+		named.arguments <- names(arguments) != ""
+		arguments[named.arguments] <- paste(names(arguments)[named.arguments], arguments[named.arguments], sep = "=")
+		arguments <- lapply(arguments, r.to.Sym)
+		if (uneval)
+			bquote(as.call(.(c(list(quote(Sym), deparse(fn.name), "("), paste(arguments, collapse = ","), list(")")))))
+		else
+			Sym(deparse(fn.name), "(", paste(arguments, collapse = ","), ")")
+	}
+
 	# call objects can be recursively descended to get constants and names.
 	# if a variable exists in R, use the value in the R variable.
 	# if a variable exists only in Python, use the value in the Python variable.
@@ -242,11 +281,6 @@ as.Sym <- function(x) {
 		stopifnot(tail(address, 1) != 1 || length(x) == 1)
 		# creates an expression to access e.g. x[[3]][[2]] when address==c(3,2)
 		deref <- Reduce(function(acc, add) as.call(list(quote(`[[`), acc, add)), address, quote(x))
-		#str(as.call(list(quote(`<-`), deref, enquote(to.replace[[name]]))))
-		#eval(as.call(list(quote(`<-`), deref, bquote(enquote(.(to.replace[[name]]))))))
-		#eval(as.call(list(quote(`<-`), deref, quote(enquote(to.replace[[name]])))))
-		#eval(as.call(list(quote(`<-`), deref, quote(as.call(list(quote(quote), to.replace[[name]]))))))
-		#eval(as.call(list(quote(`<-`), deref, as.call(list(quote(quote), enquote(to.replace[[name]]))))))
 		eval(as.call(list(quote(`<-`), deref, enquote(as.call(list(quote(`function`), formals(to.replace[[name]]), body(to.replace[[name]])))))))
 		x
 	}, names(to.replace)[function.handles], x)
@@ -316,42 +350,14 @@ as.Sym <- function(x) {
 
 			fn.body <- eval(fn.body, envir = c(vars, setNames(lapply(fn.formals, Sym), fn.formals)), enclos = env)
 			fn.formals <- paste(fn.formals, collapse = ",")
+			fn.body <- r.to.Sym(fn.body)
+			# TODO: convert default values for formals into Python
 			eval(as.call(list(quote(`<-`), deref, quote(as.call(list(quote(Sym), "lambda", fn.formals, ":", fn.body))))))
 			return(x)
 		}
 
-		# get the function name
-		fn.name <- deref.evaled[[1]]
-		# get all right siblings (parameters to function)
-		arguments <- setNames(lapply(deref.evaled[-1], eval, envir = vars, enclos = env), names(deref.evaled)[-1])
-		# prepend argument values with argument names
-		named.arguments <- names(arguments) != ""
-		arguments[named.arguments] <- paste(names(arguments)[named.arguments], arguments[named.arguments], sep = "=")
-		arguments <- lapply(arguments, function(arg)
-			if (inherits(arg, "Date"))
-				# create datetime.date instance
-				Sym("date(", as.integer(format(arg, "%Y")), ",", as.integer(format(arg, "%m")), ",", as.integer(format(arg, "%d")), ")")
-			else if (inherits(arg, "POSIXt"))
-				# create datetime.datetime instance
-				Sym("datetime(", (arg <- as.POSIXlt(arg))$year + 1900, ",", arg$mon + 1, ",", arg$mday, ",", arg$hour, ",", arg$min, ",", trunc(arg$sec), ",", round((arg$sec %% 1) * 1000000), if (!is.null(arg$gmtoff)) paste(",timezone(timedelta(seconds = ", arg$gmtoff, "))") else "", ")")
-			else if (inherits(arg, "difftime"))
-				# create datetime.timedelta instance
-				Sym("timedelta(0,", as.double(arg, units = "secs"), ")")
-			else if (is.complex(arg))
-				# R formats with a+bi. Python formats with a+bj.
-				Sym(paste(Re(arg), "+", Im(arg), "j", sep = ""))
-			else if (is.character(arg) && !any(class(arg) == 'Sym'))
-				# quote strings
-				# R's escape sequences map directly to Python unicode strings,
-				# except for "\`" because backtick are not quotes in Python,
-				# but this doesn't matter since encodeString() quotes with "\"".
-				Sym(paste("u", encodeString(arg, quote = "\""), sep = ""))
-			else
-				# pass-through
-				arg
-		)
 		# replace e.g. x[[i]][[j]] with e.g. Sym(x[[i]][[j]][[1]], "(", x[[i]][[j]][[2]], x[[i]][[j]][[3]], ")")
-		eval(as.call(list(quote(`<-`), deref, quote(as.call(c(list(quote(Sym), as.character(fn.name), "("), paste(arguments, collapse = ","), list(")")))))))
+		eval(as.call(list(quote(`<-`), deref, pass.through.function(deref.evaled, uneval = TRUE))))
 		# carry the transformed x to the next transformation function
 		x
 	}, names(to.replace)[is.na(to.replace)], x)
